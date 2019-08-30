@@ -164,8 +164,11 @@ int main(int argc, char *argv[]){
 	int    verbose=0,loops=1;
 	int    i,ii;
     int    timeouts = 0;
-
-
+	int    numbuf = 4;
+	int    started;
+	int    timeouts, last_timeouts = 0;
+	int    recovering_timeout = FALSE
+	
 	EdtDev *pdv_p = NULL;
 
 	u_char **bufs;
@@ -250,6 +253,8 @@ int main(int argc, char *argv[]){
         return EXIT_FAILURE;
 	}
 
+	pdv_flush_fifo(pdv_p);
+
 	s_height=pdv_get_height(pdv_p);
 	s_width=pdv_get_width(pdv_p);
     s_depth = pdv_get_depth(pdv_p);
@@ -278,70 +283,62 @@ int main(int argc, char *argv[]){
 	 *
 	 */
 	pdv_multibuf(pdv_p, 4);
-	//pdv_start_image(pdv_p);
-	bufs = (u_char **)malloc(loops * sizeof(u_char *));
-    for (i=0; i<loops; i++){
-		if ((bufs[i] = edt_alloc(imagesize)) == NULL){
-	    	printf("buffer allocation FAILED (probably too many images specified)\n");
-	    	exit(1);
-		}
+	if (pdv_p->dd_p->force_single){
+         pdv_start_image(pdv_p);
+         started = 1;
+    }else{
+         pdv_start_images(pdv_p, numbufs);
+         started = numbufs;
     }
+ 
 	
 	(void) edt_dtime();		/* init time for check */
-    pdv_start_images(pdv_p, loops);
     for (i=0; i<loops; i++){
-		image_p = pdv_wait_image(pdv_p);
-		memcpy(bufs[i], image_p, imagesize);
-    }
-    dtime = edt_dtime();
-
-    if (verbose) printf("%f frames/sec\n", (double) (loops) / dtime); 
-	
-	i=0;
-	while(loops) {
-		start_ts = getClockTime();
-
-	            //start acquisition of next image
-		//image_p = pdv_wait_image_raw(pdv_p); //returns the latest image
-		//memset(image_p,0x00,pdv_image_size(pdv_p));
-		//pdv_start_image(pdv_p);
+		printf("getting image %d\r", i + 1);
+        fflush(stdout);
 		
-
-		//image_p=pdv_image(pdv_p);
-		//pdv_start_image(pdv_p);
-		//timeouts=pdv_timeouts(pdv_p);
-		//if (timeouts){
-	    //	printf("Warning: got %d timeouts (incomplete images)\n",timeouts);
-	    //	printf("check camera and connections\n");
-	    //}
-
-	    end_ts = getClockTime();
-
-		//if (verbose){	
-		//	if (i == 1) fprintf(stdout,"Acquisition + shutter runtime = %f\n", end_ts-shutter_ts);
-		//	fprintf(stdout,"%02i Image acquisition runtime = %f\n",i, end_ts-start_ts);
-		//}
+		image_p = pdv_wait_image(pdv_p);
+		if (i < loops - started){
+             pdv_start_image(pdv_p);
+        }
+        timeouts = pdv_timeouts(pdv_p);
+ 
+         /*
+          * check for timeouts or data overruns -- timeouts occur when data
+          * is lost, camera isn't hooked up, etc, and application programs
+          * should always check for them. data overruns usually occur as a
+          * result of a timeout but should be checked for separately since
+          * ROI can sometimes mask timeouts
+          */
+        if (timeouts > last_timeouts){
+             /*
+              * pdv_timeout_cleanup helps recover gracefully after a timeout,
+              * particularly if multiple buffers were prestarted
+              */
+             pdv_timeout_restart(pdv_p, TRUE);
+             last_timeouts = timeouts;
+             recovering_timeout = TRUE;
+             printf("\ntimeout....\n");
+        } else if (recovering_timeout){
+             pdv_timeout_restart(pdv_p, TRUE);
+             recovering_timeout = FALSE;
+             printf("\nrestarted....\n");
+        }
+		
 		if (loops == 1){
 			sprintf(string,"%s",file);
 		} else {
 			sprintf(string,"%s%04i%s",file,i+1,".fits");
 		}
-
-		//process and/or display image previously acquired here
-		WriteFitsImage(string, s_height, s_width,bufs[i]);
-
-		if (verbose){
-			save_ts=getClockTime();;
-			fprintf(stdout,"%02i Image saving runtime = %f\n",i+1, save_ts-end_ts);
-			//fprintf(stdout," got image %s\n",string);
-		}
-		
+        WriteFitsImage(string, s_height, s_width,bufs[i]);
 		if (verbose) fprintf(stdout,"filename saved as %s\n", string);
+     }
+    
+	}
+    dtime = edt_dtime();
 
-		loops--;
-		i++;
-
-	}	
+    if (verbose) printf("%f frames/sec\n", (double) (loops) / dtime); 
+	
 	//pdv_free(image_p);
 	pdv_close(pdv_p);
 
