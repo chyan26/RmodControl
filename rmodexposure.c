@@ -116,23 +116,6 @@ int WriteFitsImage(char *filename, int height, int width, u_char * image_p)
 }
 
 
-/*
- * Get the current clock timestamp
- */
-static double
-getClockTime(void) {
-
-   struct timespec ts;
-
-   if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
-      //cfht_logv(CFHT_MAIN, CFHT_LOGONLY,
-		//"(%s:%d) unable to get clock timestamp : %s (errno=%d)",
-		//__FILE__, __LINE__, strerror(errno), errno);
-      return 0;
-   }
-   return (double)(ts.tv_sec + ts.tv_nsec / 1000000000.0);
-}
-
 void delay(unsigned int mseconds)
 {
     clock_t goal = mseconds + clock();
@@ -163,12 +146,11 @@ int main(int argc, char *argv[]){
 	int    imagesize;
 	int    verbose=0,loops=1;
 	int    i,ii;
-    int    timeouts = 0;
-	int    numbuf = 4;
+	int    numbufs = 4;
 	int    started;
-	int    timeouts, last_timeouts = 0;
-	int    recovering_timeout = FALSE
-	
+	int    timeouts =0 , last_timeouts = 0;
+	int    recovering_timeout = FALSE;
+
 	EdtDev *pdv_p = NULL;
 
 	u_char **bufs;
@@ -233,11 +215,11 @@ int main(int argc, char *argv[]){
 
 	/* Start to establish EDT connection */
 	unit = edt_parse_unit_channel(unitstr, edt_devname, "pdv", &channel);
-	
+
 	/*
 	 *   Waiting for shutter
  	 */
-	shutter_ts = getClockTime();
+	//shutter_ts = getClockTime();
 	//sleep(1);
 
 	/*
@@ -259,7 +241,7 @@ int main(int argc, char *argv[]){
 	s_width=pdv_get_width(pdv_p);
     s_depth = pdv_get_depth(pdv_p);
     imagesize = pdv_get_imagesize(pdv_p);
-	
+
 	image_p=pdv_alloc(pdv_image_size(pdv_p));
 
 	if (verbose) printf("Image size --> Height = %i Width= %i\n", s_height, s_width);
@@ -290,19 +272,24 @@ int main(int argc, char *argv[]){
          pdv_start_images(pdv_p, numbufs);
          started = numbufs;
     }
- 
-	
+
+
+    if (verbose) fprintf(stdout,"Setting time-out limit %i\n", 100000);
+    pdv_set_timeout(pdv_p, 100000);
+
 	(void) edt_dtime();		/* init time for check */
     for (i=0; i<loops; i++){
 		printf("getting image %d\r", i + 1);
         fflush(stdout);
-		
+
 		image_p = pdv_wait_image(pdv_p);
 		if (i < loops - started){
              pdv_start_image(pdv_p);
         }
+
+
         timeouts = pdv_timeouts(pdv_p);
- 
+
          /*
           * check for timeouts or data overruns -- timeouts occur when data
           * is lost, camera isn't hooked up, etc, and application programs
@@ -324,21 +311,21 @@ int main(int argc, char *argv[]){
              recovering_timeout = FALSE;
              printf("\nrestarted....\n");
         }
-		
+
 		if (loops == 1){
 			sprintf(string,"%s",file);
 		} else {
 			sprintf(string,"%s%04i%s",file,i+1,".fits");
 		}
-        WriteFitsImage(string, s_height, s_width,bufs[i]);
+        WriteFitsImage(string, s_height, s_width,image_p);
 		if (verbose) fprintf(stdout,"filename saved as %s\n", string);
-     }
-    
+
+
 	}
     dtime = edt_dtime();
 
-    if (verbose) printf("%f frames/sec\n", (double) (loops) / dtime); 
-	
+    if (verbose) printf("%f frames/sec\n", (double) (loops) / dtime);
+
 	//pdv_free(image_p);
 	pdv_close(pdv_p);
 
@@ -347,4 +334,3 @@ int main(int argc, char *argv[]){
 	return EXIT_SUCCESS;
 
 }
-
